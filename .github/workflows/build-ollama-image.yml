@@ -1,0 +1,103 @@
+name: Build and Push Ollama Image
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Git branch or tag to build, e.g. master, custom-fix, v0.12.9"
+        required: true
+        default: "master"
+        type: string
+      image_tag:
+        description: "Docker image tag to push, e.g. v0.12.9-custom-001"
+        required: true
+        default: "custom"
+        type: string
+      image_name:
+        description: "Docker Hub image name"
+        required: true
+        default: "ollama"
+        type: string
+      platforms:
+        description: "Target platforms, e.g. linux/amd64 or linux/amd64,linux/arm64"
+        required: true
+        default: "linux/amd64"
+        type: string
+      push_latest:
+        description: "Also push :latest"
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  REGISTRY: docker.io
+  IMAGE_NAMESPACE: ${{ secrets.DOCKERHUB_USERNAME }}
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout selected source ref
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Show source info
+        run: |
+          echo "source_ref=${{ inputs.source_ref }}"
+          echo "image_tag=${{ inputs.image_tag }}"
+          echo "platforms=${{ inputs.platforms }}"
+          git rev-parse HEAD
+          git describe --tags --always || true
+          git status --short || true
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ inputs.platforms }}
+          push: true
+          provenance: false
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ inputs.image_name }}:${{ inputs.image_tag }}
+
+      - name: Push latest tag
+        if: ${{ inputs.push_latest }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          platforms: ${{ inputs.platforms }}
+          push: true
+          provenance: false
+          tags: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAMESPACE }}/${{ inputs.image_name }}:latest
+
+      - name: Print pushed image
+        run: |
+          echo "Pushed:"
+          echo "docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ inputs.image_name }}:${{ inputs.image_tag }}"
+          if [ "${{ inputs.push_latest }}" = "true" ]; then
+            echo "docker.io/${{ secrets.DOCKERHUB_USERNAME }}/${{ inputs.image_name }}:latest"
+          fi
